@@ -752,6 +752,84 @@ void QPdfEnginePrivate::convertImage(const QImage & image, QByteArray & imageDat
     }
 }
 
+#include <iostream>
+
+class jpg_header_reader {
+private:
+  const QByteArray * data;
+  int index;
+  
+  class jpeg_exception {};
+  
+  unsigned char next() {
+    if (index == data->size()) throw jpeg_exception();
+    return data->data()[index++];
+  }
+    
+  void skip() {
+    int l = (next() << 8) + next();
+    if (l < 2) throw jpeg_exception();
+    for (int i=2; i < l; ++i) next();
+  }
+
+  void read_header() {
+    int l = (next() << 8) + next();
+    if (l < 2) throw jpeg_exception();
+    precision = next();
+    height = (next() << 8) + next();
+    width = (next() << 8) + next();
+    components = next();
+    if (l != 8 + components*3) throw jpeg_exception();
+  }
+  
+public:
+  bool read(const QByteArray * d) {
+    index=0;
+    data=d;
+    try {
+      if (next() != 0xFF) throw jpeg_exception();
+      unsigned char marker = next();
+      if (marker != 0xD8) throw jpeg_exception();
+      while (true) {
+	marker = next();
+	while (marker != 0xFF) marker=next();
+	while (marker == 0xFF) marker=next();
+	switch(marker) {
+	case 0xC0:
+	case 0xC1:
+	case 0xC2:
+	case 0xC3:
+	case 0xC5:
+	case 0xC6:
+	case 0xC7:
+	case 0xC9:
+	case 0xCA:
+	case 0xCB:
+	case 0xCD:
+	case 0xCE:
+	case 0xCF:
+	  read_header();
+	  return true;
+	case 0xDA:
+	case 0xD9:
+	  return false;
+	default:
+	  skip();
+	  break;
+	}
+      }
+    } catch(jpeg_exception) {
+      return false;
+    }
+    return true;
+  }
+
+  int precision, height, width, components;
+    
+};
+
+
+
 /*!
  * Adds an image to the pdf and return the pdf-object id. Returns -1 if adding the image failed.
  */
@@ -848,14 +926,16 @@ int QPdfEnginePrivate::addImage(const QImage &img, bool *bitmap, qint64 serial_n
             delete[] dest;
         }
 
-        if (colorMode != QPrinter::GrayScale && noneScaled != 0 && data != 0 && 
-            data->size() > 9 && (unsigned char)data->data()[0] == 0xff && (unsigned char)data->data()[1] == 0xd8 &&
-            (uLongf)data->size()*10 < target*13) {
-            d = data->data()[6] * 8; //Read the number of channels from the jpeg header
+
+        if (colorMode != QPrinter::GrayScale && noneScaled != 0 && data != 0) {
+	  jpg_header_reader header;
+	  if (header.read(data)) {
+	    d = header.components == 3?32:8;
             imageData = *data;
             target=data->size();
             dct=true;
             uns=true;
+	  }
         }
 
         if (uns) {
