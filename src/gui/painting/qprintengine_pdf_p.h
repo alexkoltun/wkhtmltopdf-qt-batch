@@ -141,7 +141,25 @@ class QPdfEnginePrivate : public QPdfBaseEnginePrivate
 {
     Q_DECLARE_PUBLIC(QPdfEngine)
 public:
-  
+
+    class CachedImageData {
+    public:
+        CachedImageData() {
+            hasData = false;
+        }
+
+        QByteArray data;
+        int width;
+        int height;
+        int depth;
+        int maskObject;
+        int softMaskObject;
+        bool dct;
+        bool hasData;
+        QByteArray softMaskHashKey;
+        QByteArray maskHashKey;
+    };
+
     class OutlineItem {
     public:
         OutlineItem *parent;
@@ -152,24 +170,24 @@ public:
         uint obj;
         QString text;
         QString anchor;
-        
-        OutlineItem(const QString &t, const QString &a): 
+
+        OutlineItem(const QString &t, const QString &a):
             parent(NULL), next(NULL), prev(NULL), firstChild(NULL), lastChild(NULL),
             obj(0), text(t), anchor(a) {}
         ~OutlineItem() {
             OutlineItem *i = firstChild;
-            while(i != NULL) { 
+            while(i != NULL) {
                 OutlineItem *n = i->next;
                 delete i;
                 i=n;
             }
         }
     };
-    
+
     OutlineItem *outlineRoot;
     OutlineItem *outlineCurrent;
     void writeOutlineChildren(OutlineItem *node);
-    
+
     QPdfEnginePrivate(QPrinter::PrinterMode m);
     ~QPdfEnginePrivate();
 
@@ -219,14 +237,14 @@ private:
     int imageQuality;
 
     int writeImage(const QByteArray &data, int width, int height, int depth,
-                   int maskObject, int softMaskObject, bool dct = false);
+                   int maskObject, int softMaskObject, bool dct = false, bool cached = false, QByteArray* imageHashKey=0, QByteArray* softMaskImageHashKey=0, QByteArray* maskImageHashKey=0);
     void writePage();
 
     int addXrefEntry(int object, bool printostr = true);
 
     void printString(const QString &string);
     void printAnchor(const QString &name);
-    
+
     void xprintf(const char* fmt, ...);
     inline void write(const QByteArray &data) {
         stream->writeRawData(data.constData(), data.size());
@@ -234,8 +252,10 @@ private:
     }
 
     int writeCompressed(const char *src, int len);
+    int writeCompressedReturnData(const char *src, int len, QByteArray* compresedData);
     inline int writeCompressed(const QByteArray &data) { return writeCompressed(data.constData(), data.length()); }
     int writeCompressed(QIODevice *dev);
+    int writeCompressedReturnDataDevice(QIODevice *dev, QByteArray* compressedData);
 
     // various PDF objects
     int pageRoot, catalog, info, graphicsState, patternColorSpace;
@@ -244,6 +264,8 @@ private:
     QVector<uint> pages;
     QHash<qint64, uint> imageCache;
     QHash<QPair<uint, uint>, uint > alphaCache;
+
+    static QHash<QByteArray, CachedImageData> globalImageDataCache;
 };
 
 QT_END_NAMESPACE
