@@ -134,6 +134,8 @@ public:
 private:
     Q_DISABLE_COPY(QPdfEngine)
 
+    QHash<QString, QPixmap> rectImagesCache;
+
     QPrinter::PrinterState state;
 };
 

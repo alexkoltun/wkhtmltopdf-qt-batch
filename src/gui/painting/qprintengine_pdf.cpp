@@ -320,7 +320,21 @@ void QPdfEngine::drawPixmap (const QRectF &rectangle, const QPixmap &pixmap, con
     QBrush b = d->brush;
 
     QRect sourceRect = sr.toRect();
-    QPixmap pm = sourceRect != pixmap.rect() ? pixmap.copy(sourceRect) : pixmap;
+    QPixmap pm;
+    if(sourceRect != pixmap.rect()) {
+        QString key = QString("%1-%2-%3-%4-%5").arg(pm.cacheKey(), sourceRect.x(), sourceRect.y(), sourceRect.width(), sourceRect.height());
+
+        pm = rectImagesCache.value(key);
+
+        if(pm.isNull()) {
+            pm = pixmap.copy(sourceRect);
+            rectImagesCache.insert(key, pm);
+        }
+    }
+    else {
+        pm = pixmap;
+    }
+
     QImage unscaled = pm.toImage();
     QImage image = unscaled;
 
