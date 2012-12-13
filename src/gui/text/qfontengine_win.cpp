@@ -432,7 +432,7 @@ void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFla
     for(int i = 0; i < glyphs->numGlyphs; i++) {
         unsigned int glyph = glyphs->glyphs[i];
 
-        glyphs->advances_x[i] = (result[i]*72 / designToDevice.value());
+        glyphs->advances_x[i] = QFixed::fromReal(result[i]*64.0 / designToDevice.value());
         glyphs->advances_y[i] = 0;
     }
 
@@ -441,7 +441,7 @@ void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFla
 
     free(result);
 
-    doKerning(glyphs, QTextEngine::DesignMetrics);
+    //doKerning(glyphs, QTextEngine::DesignMetrics);
 }
 
 glyph_metrics_t QFontEngineWin::boundingBox(const QGlyphLayout &glyphs)
