@@ -996,7 +996,7 @@ int QPdfEnginePrivate::addImage(const QImage &img, bool *bitmap, qint64 serial_n
             jpg_header_reader header;
             if (header.read(data)) {
                 d = header.components == 3?32:8;
-                imageData = QByteArray(data->constData(), data->length());
+                imageData = *data; //QByteArray(data->constData(), data->length());
                 target=data->size();
                 dct=true;
                 uns=true;
@@ -1065,12 +1065,13 @@ void QPdfEnginePrivate::drawTextItem(const QPointF &p, const QTextItemInt &ti)
 {
     if (ti.charFormat.isAnchor()) {
         qreal size = ti.fontEngine->fontDef.pixelSize;
+/*
 #ifdef Q_WS_WIN
         if (ti.fontEngine->type() == QFontEngine::Win) {
             QFontEngineWin *fe = static_cast<QFontEngineWin *>(ti.fontEngine);
             size = fe->tm.tmHeight;
         }
-#endif
+#endif */
         int synthesized = ti.fontEngine->synthesized();
         qreal stretch = synthesized & QFontEngine::SynthesizedStretch ? ti.fontEngine->fontDef.stretch/100. : 1.;
 

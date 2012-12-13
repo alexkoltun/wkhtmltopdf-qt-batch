@@ -393,88 +393,55 @@ bool QFontEngineWin::stringToCMap(const QChar *str, int len, QGlyphLayout *glyph
     return true;
 }
 
-inline void calculateTTFGlyphWidth(HDC hdc, UINT glyph, int &width)
+inline void calculateTTFGlyphWidth(HDC hdc, UINT *glyphIdxs, UINT nIdxes, int *out)
 {
+    WORD *indexes = (WORD *)malloc(nIdxes * 2);
+
+    for(int i=0; i<nIdxes; i++) {
+        indexes[i] = (WORD)glyphIdxs[i];
+    }
+
 #if defined(Q_WS_WINCE)
-    GetCharWidth32(hdc, glyph, glyph, &width);
+    GetCharWidth32(hdc, glyphIdxs[0], glyphIdxs[0], glyphIdxs);
 #else
     if (ptrGetCharWidthI)
-        ptrGetCharWidthI(hdc, glyph, 1, 0, &width);
+        ptrGetCharWidthI(hdc, glyphIdxs[0], nIdxes, indexes, out);
 #endif
+
+    free(indexes);
 }
 
 void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFlags flags) const
 {
+    /*
+    for(int i = 0; i < glyphs->numGlyphs; i++) {
+        glyphs->advances_x[i] = 7;
+        glyphs->advances_y[i] = 0;
+    }*/
+
     HGDIOBJ oldFont = 0;
     HDC hdc = shared_dc();
-    if (ttf && (flags & QTextEngine::DesignMetrics)) {
-        for(int i = 0; i < glyphs->numGlyphs; i++) {
-            unsigned int glyph = glyphs->glyphs[i];
-            if(int(glyph) >= designAdvancesSize) {
-                int newSize = (glyph + 256) >> 8 << 8;
-                designAdvances = q_check_ptr((QFixed *)realloc(designAdvances,
-                            newSize*sizeof(QFixed)));
-                for(int i = designAdvancesSize; i < newSize; ++i)
-                    designAdvances[i] = -1000000;
-                designAdvancesSize = newSize;
-            }
-            if (designAdvances[glyph] < -999999) {
-                if (!oldFont)
-                    oldFont = selectDesignFont();
 
-                int width = 0;
-                calculateTTFGlyphWidth(hdc, glyph, width);
-                designAdvances[glyph] = QFixed(width) / designToDevice;
-            }
-            glyphs->advances_x[i] = designAdvances[glyph];
-            glyphs->advances_y[i] = 0;
-        }
-        if(oldFont)
-            DeleteObject(SelectObject(hdc, oldFont));
-    } else {
-        for(int i = 0; i < glyphs->numGlyphs; i++) {
-            unsigned int glyph = glyphs->glyphs[i];
 
-            glyphs->advances_y[i] = 0;
+    int *result = (int *)malloc(glyphs->numGlyphs * 4);
 
-            if (glyph >= widthCacheSize) {
-                int newSize = (glyph + 256) >> 8 << 8;
-                widthCache = q_check_ptr((unsigned char *)realloc(widthCache,
-                            newSize*sizeof(QFixed)));
-                memset(widthCache + widthCacheSize, 0, newSize - widthCacheSize);
-                widthCacheSize = newSize;
-            }
-            glyphs->advances_x[i] = widthCache[glyph];
-            // font-width cache failed
-            if (glyphs->advances_x[i] == 0) {
-                int width = 0;
-                if (!oldFont)
-                    oldFont = SelectObject(hdc, hfont);
+    oldFont = selectDesignFont();
 
-                if (!ttf) {
-                    QChar ch[2] = { ushort(glyph), 0 };
-                    int chrLen = 1;
-                    if (glyph > 0xffff) {
-                        ch[0] = QChar::highSurrogate(glyph);
-                        ch[1] = QChar::lowSurrogate(glyph);
-                        ++chrLen;
-                    }
-                    SIZE size = {0, 0};
-                    GetTextExtentPoint32(hdc, (wchar_t *)ch, chrLen, &size);
-                    width = size.cx;
-                } else {
-                    calculateTTFGlyphWidth(hdc, glyph, width);
-                }
-                glyphs->advances_x[i] = width;
-                // if glyph's within cache range, store it for later
-                if (width > 0 && width < 0x100)
-                    widthCache[glyph] = width;
-            }
-        }
+    calculateTTFGlyphWidth(hdc, glyphs->glyphs, glyphs->numGlyphs, result);
 
-        if (oldFont)
-            SelectObject(hdc, oldFont);
+    for(int i = 0; i < glyphs->numGlyphs; i++) {
+        unsigned int glyph = glyphs->glyphs[i];
+
+        glyphs->advances_x[i] = (result[i]*72 / designToDevice.value());
+        glyphs->advances_y[i] = 0;
     }
+
+    if(oldFont)
+        DeleteObject(SelectObject(hdc, oldFont));
+
+    free(result);
+
+    doKerning(glyphs, QTextEngine::DesignMetrics);
 }
 
 glyph_metrics_t QFontEngineWin::boundingBox(const QGlyphLayout &glyphs)
