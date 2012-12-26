@@ -54,8 +54,18 @@
 //
 
 #include <QtCore/qconfig.h>
+#include <QCache>
+#include <QReadWriteLock>
 
 QT_BEGIN_NAMESPACE
+
+
+struct FontGlyph {
+
+    LOGFONT font;
+    HB_Glyph *glyphs;
+    int numGlyphs;
+};
 
 class QNativeImage;
 
@@ -144,6 +154,9 @@ public:
 private:
     QNativeImage *drawGDIGlyph(HFONT font, glyph_t, int margin, const QTransform &xform,
                                QImage::Format mask_format);
+
+    QCache<FontGlyph *, int> *fontGlyphCache;
+    QReadWriteLock *fGCLock;
 
 };
 

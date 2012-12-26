@@ -208,6 +208,8 @@ void QFontEngineWin::getCMap()
     _faceId.index = 0;
     if(cmap) {
         OUTLINETEXTMETRIC *otm = getOutlineTextMetric(hdc);
+        int mm = GetMapMode(hdc);
+        qDebug() << mm;
         designToDevice = QFixed((int)otm->otmEMSquare)/int(otm->otmTextMetrics.tmHeight);
         unitsPerEm = otm->otmEMSquare;
         x_height = (int)otm->otmsXHeight;
@@ -346,6 +348,9 @@ QFontEngineWin::QFontEngineWin(const QString &name, HFONT _hfont, bool stockFont
     designAdvances = 0;
     designAdvancesSize = 0;
 
+    fontGlyphCache = new QCache<FontGlyph *, int>(1000);
+    fGCLock = new QReadWriteLock();
+
 #ifndef Q_WS_WINCE
     if (!resolvedGetCharWidthI)
         resolveGetCharWidthI();
@@ -367,6 +372,10 @@ QFontEngineWin::~QFontEngineWin()
         if (!DeleteObject(hfont))
             qErrnoWarning("QFontEngineWin: failed to delete non-stock font...");
     }
+
+    fontGlyphCache->clear();
+    delete fontGlyphCache;
+    delete fGCLock;
 }
 
 HGDIOBJ QFontEngineWin::selectDesignFont() const
@@ -411,6 +420,25 @@ inline void calculateTTFGlyphWidth(HDC hdc, UINT *glyphIdxs, UINT nIdxes, int *o
     free(indexes);
 }
 
+
+inline bool compareFonts(LOGFONT f1, LOGFONT f2) {
+    int faceNameCompare = wcscmp(f1.lfFaceName, f2.lfFaceName);
+    return (faceNameCompare == 0
+            && (f1.lfCharSet == f2.lfCharSet)
+            && (f1.lfClipPrecision == f2.lfClipPrecision)
+            && (f1.lfEscapement == f2.lfEscapement)
+            && (f1.lfHeight == f2.lfHeight)
+            && (f1.lfItalic == f2.lfItalic)
+            && (f1.lfOrientation == f2.lfOrientation)
+            && (f1.lfOutPrecision == f2.lfOutPrecision)
+            && (f1.lfPitchAndFamily == f2.lfPitchAndFamily)
+            && (f1.lfQuality == f2.lfQuality)
+            && (f1.lfStrikeOut == f2.lfStrikeOut)
+            && (f1.lfUnderline == f2.lfUnderline)
+            && (f1.lfWeight == f2.lfWeight)
+            && (f1.lfWidth == f2.lfWidth));
+}
+
 void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFlags flags) const
 {
     /*
@@ -422,24 +450,86 @@ void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFla
     HGDIOBJ oldFont = 0;
     HDC hdc = shared_dc();
 
+    fGCLock->lockForRead();
 
-    int *result = (int *)malloc(glyphs->numGlyphs * 4);
+    // Checking if already exists.
+    int matchId = -1;
+    for (int i = 0; i < fontGlyphCache->size(); i++) {
 
-    oldFont = selectDesignFont();
+        FontGlyph *fg = fontGlyphCache->keys()[i];
+        if ((compareFonts(fg->font, logfont)) && (fg->numGlyphs == glyphs->numGlyphs)) {
 
-    calculateTTFGlyphWidth(hdc, glyphs->glyphs, glyphs->numGlyphs, result);
+            // Comparing glyphs.
+            int glyphsMatch = true;
+            for (int j = 0; j < fg->numGlyphs; j++) {
+                if (fg->glyphs[j] != glyphs->glyphs[j]) {
+                    glyphsMatch = false;
+                    break;
+                }
+            }
 
-    for(int i = 0; i < glyphs->numGlyphs; i++) {
-        unsigned int glyph = glyphs->glyphs[i];
+            if (glyphsMatch) {
 
-        glyphs->advances_x[i] = QFixed::fromReal(result[i]*64.0 / designToDevice.value());
-        glyphs->advances_y[i] = 0;
+                matchId = i;
+                break;
+            }
+        }
     }
 
-    if(oldFont)
-        DeleteObject(SelectObject(hdc, oldFont));
+    fGCLock->unlock();
 
-    free(result);
+
+    if (matchId != -1) {
+
+        fGCLock->lockForRead();
+
+        // Found a matching entry.
+        FontGlyph *fg = fontGlyphCache->keys()[matchId];
+        int* result = fontGlyphCache->take(fg);
+
+        fGCLock->unlock();
+
+        for(int i = 0; i < glyphs->numGlyphs; i++) {
+            glyphs->advances_x[i] = QFixed::fromReal(result[i]*64.0 / designToDevice.value());
+            glyphs->advances_y[i] = 0;
+        }
+
+    } else {
+        // Haven't found a matching entry.
+        int *result = (int *)malloc(glyphs->numGlyphs * 4);
+
+        oldFont = selectDesignFont();
+
+        calculateTTFGlyphWidth(hdc, glyphs->glyphs, glyphs->numGlyphs, result);
+
+        for(int i = 0; i < glyphs->numGlyphs; i++) {
+            // unsigned int glyph = glyphs->glyphs[i]; // OMER: Unused.
+
+            glyphs->advances_x[i] = QFixed::fromReal(result[i]*64.0 / designToDevice.value());
+            glyphs->advances_y[i] = 0;
+        }
+
+        if(oldFont)
+            DeleteObject(SelectObject(hdc, oldFont));
+
+
+        fGCLock->lockForWrite();
+
+        // Adding result to cache for further use.
+        struct FontGlyph *fg = (FontGlyph *)malloc(sizeof(struct FontGlyph) * 4);
+        fg->font = logfont;
+        fg->numGlyphs = glyphs->numGlyphs;
+        fg->glyphs = (HB_Glyph *) malloc (glyphs->numGlyphs * 4);
+        for (int i = 0; i < glyphs->numGlyphs; i++) {
+            fg->glyphs[i] = (HB_Glyph)glyphs->glyphs[i];
+        }
+
+        fontGlyphCache->insert(fg, result);
+
+        fGCLock->unlock();
+
+        //free(result);
+    }
 
     //doKerning(glyphs, QTextEngine::DesignMetrics);
 }

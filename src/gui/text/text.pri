@@ -243,3 +243,7 @@ contains(QT_CONFIG, fontconfig) {
 
 DEFINES += QT_NO_OPENTYPE
 INCLUDEPATH += ../3rdparty/harfbuzz/src
+
+
+
+
