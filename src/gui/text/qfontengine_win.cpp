@@ -348,7 +348,7 @@ QFontEngineWin::QFontEngineWin(const QString &name, HFONT _hfont, bool stockFont
     designAdvances = 0;
     designAdvancesSize = 0;
 
-    fontGlyphCache = new QCache<FontGlyph *, int>(1000);
+    fontGlyphCache = new QCache<uint, FontGlyph>(10000);
     fGCLock = new QReadWriteLock();
 
 #ifndef Q_WS_WINCE
@@ -439,6 +439,31 @@ inline bool compareFonts(LOGFONT f1, LOGFONT f2) {
             && (f1.lfWidth == f2.lfWidth));
 }
 
+inline uint calculateFontHash(LOGFONT font, QGlyphLayout* glyphs) {
+
+    int phi = 0x9e3779b9;
+    uint hash = qHash(font.lfFaceName) + phi;
+
+    hash ^= qHash(font.lfCharSet) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfClipPrecision) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfEscapement) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfHeight) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfItalic) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfOrientation) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfOutPrecision) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfPitchAndFamily) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfQuality) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfStrikeOut) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfUnderline) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfWeight) + phi + (hash << 6) + (hash >> 2);
+    hash ^= qHash(font.lfWidth) + phi + (hash << 6) + (hash >> 2);
+
+    hash ^= qHash(glyphs) + phi + (hash << 6) + (hash >> 2);
+
+    return hash;
+}
+
+
 void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFlags flags) const
 {
     /*
@@ -453,49 +478,24 @@ void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFla
     fGCLock->lockForRead();
 
     // Checking if already exists.
-    int matchId = -1;
-    for (int i = 0; i < fontGlyphCache->size(); i++) {
-
-        FontGlyph *fg = fontGlyphCache->keys()[i];
-        if ((compareFonts(fg->font, logfont)) && (fg->numGlyphs == glyphs->numGlyphs)) {
-
-            // Comparing glyphs.
-            int glyphsMatch = true;
-            for (int j = 0; j < fg->numGlyphs; j++) {
-                if (fg->glyphs[j] != glyphs->glyphs[j]) {
-                    glyphsMatch = false;
-                    break;
-                }
-            }
-
-            if (glyphsMatch) {
-
-                matchId = i;
-                break;
-            }
-        }
-    }
-
-    fGCLock->unlock();
-
-
-    if (matchId != -1) {
-
-        fGCLock->lockForRead();
+    uint currentFontHash = calculateFontHash(logfont, glyphs);
+    if ((fontGlyphCache->size() > 0) &&
+            (fontGlyphCache->contains(currentFontHash))) {
 
         // Found a matching entry.
-        FontGlyph *fg = fontGlyphCache->keys()[matchId];
-        int* result = fontGlyphCache->take(fg);
+        FontGlyph *fg = fontGlyphCache->object(currentFontHash);
 
         fGCLock->unlock();
 
         for(int i = 0; i < glyphs->numGlyphs; i++) {
-            glyphs->advances_x[i] = QFixed::fromReal(result[i]*64.0 / designToDevice.value());
+            glyphs->advances_x[i] = QFixed::fromReal(fg->result[i]*64.0 / designToDevice.value());
             glyphs->advances_y[i] = 0;
         }
 
     } else {
-        // Haven't found a matching entry.
+
+        fGCLock->unlock();
+
         int *result = (int *)malloc(glyphs->numGlyphs * 4);
 
         oldFont = selectDesignFont();
@@ -516,19 +516,23 @@ void QFontEngineWin::recalcAdvances(QGlyphLayout *glyphs, QTextEngine::ShaperFla
         fGCLock->lockForWrite();
 
         // Adding result to cache for further use.
-        struct FontGlyph *fg = (FontGlyph *)malloc(sizeof(struct FontGlyph) * 4);
+
+        // Haven't found a matching entry.
+        struct FontGlyph *fg = (FontGlyph *)malloc(sizeof(struct FontGlyph) * 4 + 2 * glyphs->numGlyphs * 4);
         fg->font = logfont;
         fg->numGlyphs = glyphs->numGlyphs;
         fg->glyphs = (HB_Glyph *) malloc (glyphs->numGlyphs * 4);
+        fg->result = (int *)malloc(glyphs->numGlyphs * 4);
         for (int i = 0; i < glyphs->numGlyphs; i++) {
             fg->glyphs[i] = (HB_Glyph)glyphs->glyphs[i];
+            fg->result[i] = result[i];
         }
 
-        fontGlyphCache->insert(fg, result);
+        fontGlyphCache->insert(currentFontHash, fg);
 
         fGCLock->unlock();
 
-        //free(result);
+        free(result);
     }
 
     //doKerning(glyphs, QTextEngine::DesignMetrics);

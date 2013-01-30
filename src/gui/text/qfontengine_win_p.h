@@ -65,6 +65,8 @@ struct FontGlyph {
     LOGFONT font;
     HB_Glyph *glyphs;
     int numGlyphs;
+
+    int* result;
 };
 
 class QNativeImage;
@@ -155,7 +157,8 @@ private:
     QNativeImage *drawGDIGlyph(HFONT font, glyph_t, int margin, const QTransform &xform,
                                QImage::Format mask_format);
 
-    QCache<FontGlyph *, int> *fontGlyphCache;
+    //QCache<FontGlyph *, int> *fontGlyphCache;
+    QCache<uint, FontGlyph> *fontGlyphCache;
     QReadWriteLock *fGCLock;
 
 };
